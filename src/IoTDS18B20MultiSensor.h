@@ -25,11 +25,14 @@
 #include <utility>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <ESPAsyncWebServer.h>
 #include <IoTHACompositeDeviceWrapper.h>
 #include <IoTHASensorNumberWrapper.h>
 #include <AppSettings.h>
 #include <IoTDebug.h>
 #include <JSONUtils.h>
+#include "DS18B20Settings.h"
+#include "DS18B20PageHtml.h"
 
 /**
  * @class IoTDS18B20MultiSensor
@@ -202,6 +205,153 @@ public:
     }
 
     /**
+     * @brief Read NVS slot-to-address mapping and reorder bus slots accordingly.
+     *        Call from postSetup() — replaces a manual DS18B20Settings member in the device class.
+     */
+    void loadSettings()
+    {
+        _settings.read();
+        if (_settings.isConfigured())
+        {
+            DeviceAddress storage[N];
+            const DeviceAddress* ptrs[N];
+            for (size_t i = 0; i < N; ++i)
+            {
+                ptrs[i] = _settings.getSlotAddress(i, storage[i]) ? &storage[i] : nullptr;
+            }
+            reorderByAddresses(ptrs);
+        }
+    }
+
+    /**
+     * @brief Get the HA entity name for slot @p index at runtime.
+     * @return Name string pointer, or nullptr if index is out of range.
+     */
+    const char* getSlotName(uint8_t index) const
+    {
+        const char* result = nullptr;
+        getSlotNameImpl(index, result, std::make_index_sequence<N>{});
+        return result;
+    }
+
+    /**
+     * @brief Register all DS18B20 HTTP routes on @p server.
+     *        Routes: GET /api/ds18b20/slots, /api/ds18b20/sensors,
+     *                /api/ds18b20/assign, /ds18b20config
+     *        Call from IoTDevice::onAddConfigRoutes().
+     */
+    void registerWebRoutes(AsyncWebServer& server)
+    {
+        server.on("/api/ds18b20/slots", HTTP_GET, [this](AsyncWebServerRequest* req) {
+            String json = "[";
+            for (size_t i = 0; i < N; ++i)
+            {
+                if (i > 0)
+                {
+                    json += ',';
+                }
+                json += F("{\"slot\":");
+                json += (unsigned)i;
+                json += F(",\"name\":");
+                const char* nm = getSlotName((uint8_t)i);
+                if (nm && nm[0] != '\0')
+                {
+                    json += '"';
+                    json += nm;
+                    json += '"';
+                }
+                else
+                {
+                    json += F("null");
+                }
+                json += F(",\"addr\":");
+                DeviceAddress addr;
+                if (_settings.getSlotAddress(i, addr))
+                {
+                    json += '"';
+                    json += DS18B20Settings<N>::addressToHex(addr);
+                    json += '"';
+                }
+                else
+                {
+                    json += F("null");
+                }
+                json += '}';
+            }
+            json += ']';
+            req->send(200, "application/json", json);
+        });
+
+        server.on("/api/ds18b20/sensors", HTTP_GET, [this](AsyncWebServerRequest* req) {
+            String json = "[";
+            for (uint8_t i = 0; i < _sensorCount; ++i)
+            {
+                DeviceAddress addr;
+                getSensorAddress(i, addr);
+                if (i > 0)
+                {
+                    json += ',';
+                }
+                json += F("{\"addr\":\"");
+                json += DS18B20Settings<N>::addressToHex(addr);
+                json += F("\",\"temp\":");
+                float t = getTemperatureC(i);
+                if (t == INVALID_TEMPERATURE)
+                {
+                    json += F("null");
+                }
+                else
+                {
+                    json += String(t, 1);
+                }
+                json += '}';
+            }
+            json += ']';
+            req->send(200, "application/json", json);
+        });
+
+        server.on("/api/ds18b20/assign", HTTP_GET, [this](AsyncWebServerRequest* req) {
+            for (size_t slot = 0; slot < N; ++slot)
+            {
+                String key = String('s') + slot;
+                if (req->hasArg(key.c_str()))
+                {
+                    DeviceAddress addr;
+                    if (DS18B20Settings<N>::hexToAddress(req->arg(key.c_str()), addr))
+                    {
+                        _settings.setSlotAddress(slot, addr);
+                    }
+                }
+            }
+            _settings.save();
+
+            DeviceAddress storage[N];
+            const DeviceAddress* ptrs[N];
+            for (size_t i = 0; i < N; ++i)
+            {
+                ptrs[i] = _settings.getSlotAddress(i, storage[i]) ? &storage[i] : nullptr;
+            }
+            reorderByAddresses(ptrs);
+
+            req->send(200, "application/json", F("{\"ok\":true}"));
+        });
+
+        server.on("/ds18b20config", HTTP_GET, [](AsyncWebServerRequest* req) {
+            req->send_P(200, "text/html", DS18B20_PAGE_HTML);
+        });
+    }
+
+    /**
+     * @brief PROGMEM pointer to the portal index-page nav button for this sensor type.
+     *        Use as return value from IoTDevice::onCustomIndexButtons().
+     */
+    static PGM_P indexPageButton()
+    {
+        static const char kBtn[] PROGMEM = L_DS18B20_INDEX_BTN;
+        return kBtn;
+    }
+
+    /**
      * @brief Push cached temperatures into HA entity wrappers and publish to MQTT.
      *
      * Only slots with a physical sensor (index < sensorCount()) are published.
@@ -269,7 +419,8 @@ private:
     uint8_t           _sensorCount;
     DeviceAddress     _addresses[N];
     float             _temperatures[N];
-    bool              m_useFahrenheit = false;
+    bool               m_useFahrenheit = false;
+    DS18B20Settings<N> _settings;
 
     void swapSlots(uint8_t a, uint8_t b)
     {
@@ -326,6 +477,15 @@ private:
                 result += JSONUtils::EncloseObject(obj);
             }
         }(), ...);
+    }
+
+    template<size_t... Is>
+    void getSlotNameImpl(uint8_t index, const char*& result,
+                         std::index_sequence<Is...>) const
+    {
+        ((Is == index
+            ? (result = this->template get<Is>().name(), void())
+            : void()), ...);
     }
 };
 
