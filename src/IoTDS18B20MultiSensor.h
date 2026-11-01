@@ -224,6 +224,18 @@ public:
     }
 
     /**
+     * @brief Get a const pointer to the sensor wrapper at slot @p index at runtime.
+     *        Allows calling any method on the slot (e.g. displayName(), name(), getTemperatureC()).
+     * @return Pointer to the slot, or nullptr if index is out of range.
+     */
+    const IoTHASensorNumberWrapper<float>* getSlot(uint8_t index) const
+    {
+        const IoTHASensorNumberWrapper<float>* result = nullptr;
+        getSlotImpl(index, result, std::make_index_sequence<N>{});
+        return result;
+    }
+
+    /**
      * @brief Get the HA entity name for slot @p index at runtime.
      * @return Name string pointer, or nullptr if index is out of range.
      */
@@ -477,6 +489,15 @@ private:
                 result += JSONUtils::EncloseObject(obj);
             }
         }(), ...);
+    }
+
+    template<size_t... Is>
+    void getSlotImpl(uint8_t index, const IoTHASensorNumberWrapper<float>*& result,
+                     std::index_sequence<Is...>) const
+    {
+        ((Is == index
+            ? (result = &this->template get<Is>(), void())
+            : void()), ...);
     }
 
     template<size_t... Is>
