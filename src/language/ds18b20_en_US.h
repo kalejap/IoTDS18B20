@@ -16,7 +16,7 @@
 #define L_DS18B20_COL_ADDRESS "Address"
 #define L_DS18B20_COL_TEMP    "Temp (&deg;C)"
 #define L_DS18B20_COL_MOVE    "Move"
-#define L_DS18B20_BTN_SAVE    "Save assignment"
+#define L_DS18B20_BTN_SAVE    "Save"
 #define L_DS18B20_BTN_BACK    "Back"
 #define L_DS18B20_MSG_SAVED   "Saved!"
 #define L_DS18B20_MSG_ERROR   "Error saving!"
