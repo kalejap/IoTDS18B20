@@ -34,6 +34,14 @@
 #include "DS18B20Settings.h"
 #include "DS18B20PageHtml.h"
 
+// Slot wrapper with 1-decimal-place precision for temperature display in HA.
+class DS18B20SensorSlot : public IoTHASensorNumberWrapper<float>
+{
+public:
+    explicit DS18B20SensorSlot(const char* uid)
+        : IoTHASensorNumberWrapper<float>(uid, HABaseDeviceType::PrecisionP1) {}
+};
+
 /**
  * @class IoTDS18B20MultiSensor
  * @brief Template composite HA wrapper for N DS18B20 temperature sensors on one OneWire bus.
@@ -69,11 +77,11 @@
  */
 template<size_t N>
 class IoTDS18B20MultiSensor
-    : public NCompositeWrapper<IoTHASensorNumberWrapper<float>, N>::type
+    : public NCompositeWrapper<DS18B20SensorSlot, N>::type
 {
     static_assert(N >= 1 && N <= 8, "IoTDS18B20MultiSensor: N must be between 1 and 8.");
 
-    using BaseType = typename NCompositeWrapper<IoTHASensorNumberWrapper<float>, N>::type;
+    using BaseType = typename NCompositeWrapper<DS18B20SensorSlot, N>::type;
 
 public:
     /** Maximum sensor slots — equals the template parameter N. */
@@ -407,8 +415,11 @@ protected:
         _dallasTemp.setResolution(12);
 
         const char* unit = AppSettings::temperatureUnit(!m_useFahrenheit);
-        forEachSlot([&](auto& w){ w.setUnitOfMeasurement(unit); },
-                    std::make_index_sequence<N>{});
+        forEachSlot([&](auto& w){
+            w.setUnitOfMeasurement(unit);
+            w.setDeviceClass("temperature");
+            w.setStateClass("measurement");
+        }, std::make_index_sequence<N>{});
 
         _sensorCount = 0;
         const uint8_t found = _dallasTemp.getDeviceCount();
