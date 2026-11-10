@@ -138,7 +138,9 @@ public:
 
     /**
      * @brief Trigger temperature conversion on all bus sensors and cache the results.
-     *        Blocks ~750 ms at 12-bit resolution.
+     *        Blocks ~750 ms at 12-bit resolution. Each slot that returns -127 on the
+     *        first read is retried up to 2 more times (3 total); yield() is called
+     *        before each retry to keep background tasks alive.
      * @return true if at least one sensor is present.
      */
     bool requestTemperatures()
@@ -151,12 +153,16 @@ public:
         _dallasTemp.requestTemperatures();
         for (uint8_t i = 0; i < _sensorCount; ++i)
         {
-            _temperatures[i] = _dallasTemp.getTempC(_addresses[i]);
-            if (_temperatures[i] == INVALID_TEMPERATURE) {
-                IOTLOGWARN1(F("DS18B20: read error, sensor"), i);
-            } else {
-                IOTLOGDEBUG2(F("DS18B20 sensor"), i, _temperatures[i]);
+            float t = _dallasTemp.getTempC(_addresses[i]);
+            if (t == INVALID_TEMPERATURE)
+            {
+                t = readTempWithRetry(_dallasTemp, _addresses[i], 2);
+                if (t == INVALID_TEMPERATURE)
+                    IOTLOGWARN1(F("DS18B20: all 3 read attempts failed, slot"), i);
             }
+            _temperatures[i] = t;
+            if (t != INVALID_TEMPERATURE)
+                IOTLOGDEBUG2(F("DS18B20 sensor"), i, t);
         }
         return true;
     }
@@ -454,6 +460,19 @@ private:
         float tmpT       = _temperatures[a];
         _temperatures[a] = _temperatures[b];
         _temperatures[b] = tmpT;
+    }
+
+    static float readTempWithRetry(DallasTemperature& dt, const uint8_t* addr, uint8_t maxAttempts)
+    {
+        for (uint8_t a = 0; a < maxAttempts; ++a)
+        {
+            yield();
+            dt.requestTemperaturesByAddress(addr);
+            float t = dt.getTempC(addr);
+            if (t != DEVICE_DISCONNECTED_C)
+                return t;
+        }
+        return DEVICE_DISCONNECTED_C;
     }
 
     // -----------------------------------------------------------------------

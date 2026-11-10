@@ -97,7 +97,9 @@ public:
 
     /**
      * @brief Trigger temperature conversion and cache the result.
-     *        Blocks ~750 ms at 12-bit resolution.
+     *        Blocks ~750 ms at 12-bit resolution. If the first read returns -127,
+     *        retries up to 2 more times (3 total); yield() is called before each
+     *        retry to keep background tasks alive.
      * @return true if a sensor is present and the read succeeded.
      */
     bool requestTemperatures()
@@ -108,11 +110,17 @@ public:
             return false;
         }
         _dallasTemp.requestTemperatures();
-        _rawTemperatureC = _dallasTemp.getTempC(_address);
-        if (_rawTemperatureC == INVALID_TEMPERATURE) {
-            IOTLOGWARN(F("DS18B20Single: read error"));
-            return false;
+        float t = _dallasTemp.getTempC(_address);
+        if (t == INVALID_TEMPERATURE)
+        {
+            t = readTempWithRetry(_dallasTemp, _address, 2);
+            if (t == INVALID_TEMPERATURE)
+            {
+                IOTLOGWARN(F("DS18B20Single: all 3 read attempts failed"));
+                return false;
+            }
         }
+        _rawTemperatureC = t;
         IOTLOGDEBUG1(F("DS18B20Single:"), _rawTemperatureC);
         return true;
     }
@@ -211,6 +219,19 @@ private:
     float             _rawTemperatureC = INVALID_TEMPERATURE;
     bool              _sensorFound     = false;
     bool              m_useFahrenheit  = false;
+
+    static float readTempWithRetry(DallasTemperature& dt, const uint8_t* addr, uint8_t maxAttempts)
+    {
+        for (uint8_t a = 0; a < maxAttempts; ++a)
+        {
+            yield();
+            dt.requestTemperaturesByAddress(addr);
+            float t = dt.getTempC(addr);
+            if (t != DEVICE_DISCONNECTED_C)
+                return t;
+        }
+        return DEVICE_DISCONNECTED_C;
+    }
 };
 
 #endif // IOTDS18B20SINGLESENSOR_H
