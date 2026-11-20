@@ -73,8 +73,8 @@ public:
      * @param pin  OneWire data pin (e.g. D4).
      * @param uid  Unique HA entity ID string.
      */
-    IoTDS18B20SingleSensor(uint8_t pin, const char* uid)
-        : IoTHASensorNumberWrapper<float>(uid)
+    IoTDS18B20SingleSensor(uint8_t pin, const char* uid, const HABaseDeviceType::NumberPrecision precision = HABaseDeviceType::PrecisionP1)
+        : IoTHASensorNumberWrapper<float>(uid, precision)
         , _oneWire(pin)
         , _dallasTemp(&_oneWire)
     {
